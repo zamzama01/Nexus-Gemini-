@@ -1,0 +1,6 @@
+{
+  "name": "Nexus Gemini AI",
+  "description": "An intelligent, multi-modal Gemini AI assistant with real-time streaming, conversation history, vision analysis, audio transcription, and futuristic Nexus styling.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
