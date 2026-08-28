@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { AppSettings, GeminiModelId, ThinkingLevel, AppTheme } from "../types.ts";
 import { SYSTEM_PERSONAS, AVAILABLE_MODELS, DEFAULT_SETTINGS } from "../utils/constants.ts";
 import {
@@ -11,6 +11,10 @@ import {
   RotateCcw,
   Check,
   Palette,
+  Key,
+  Eye,
+  EyeOff,
+  Info,
 } from "lucide-react";
 
 interface SettingsModalProps {
@@ -27,6 +31,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSaveSettings,
 }) => {
   const [formData, setFormData] = useState<AppSettings>(settings);
+  const [showApiKey, setShowApiKey] = useState(false);
+
+  useEffect(() => {
+    setFormData(settings);
+  }, [settings, isOpen]);
 
   if (!isOpen) return null;
 
@@ -252,6 +261,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               }
               className="w-4 h-4 accent-blue-500 rounded cursor-pointer"
             />
+          </div>
+
+          {/* Custom API Key (for GitHub Pages / Static Hosting) */}
+          <div className="space-y-2 p-4 rounded-xl bg-white/5 border border-white/10">
+            <div className="flex items-center justify-between">
+              <label className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] font-mono flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5 text-blue-400" />
+                <span>Custom Gemini API Key</span>
+              </label>
+              <span className="text-[10px] text-blue-400 font-mono">Optional / Static Host</span>
+            </div>
+            <div className="relative">
+              <input
+                id="custom-api-key-input"
+                type={showApiKey ? "text" : "password"}
+                value={formData.customApiKey || ""}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    customApiKey: e.target.value.trim(),
+                  }))
+                }
+                placeholder="AIzaSy... (leave blank to use server environment key)"
+                className="w-full py-2.5 pl-3 pr-10 bg-white/5 border border-white/10 rounded-xl text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-blue-500/50 font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1"
+                title={showApiKey ? "Hide key" : "Show key"}
+              >
+                {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            <div className="flex items-start gap-1.5 text-[11px] text-slate-400 leading-relaxed pt-1">
+              <Info className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" />
+              <span>
+                Required when deployed to <strong>GitHub Pages</strong> or pure static hosts where no backend server is running. Stored locally in your browser.
+              </span>
+            </div>
           </div>
         </div>
 

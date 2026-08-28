@@ -62,4 +62,5 @@ export interface AppSettings {
   autoTitle: boolean;
   speechVoice: string;
   speechRate: number;
+  customApiKey?: string;
 }

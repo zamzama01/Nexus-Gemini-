@@ -1,19 +1,14 @@
-import express from "express";
-import path from "path";
+import express, { Request, Response } from "express";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
-import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
 
-// Body parser limits for base64 images and audio
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// Lazy init or singleton GoogleGenAI client
 let aiClient: GoogleGenAI | null = null;
 
 function getAIClient(): GoogleGenAI {
@@ -26,22 +21,13 @@ function getAIClient(): GoogleGenAI {
       apiKey: apiKey || "",
       httpOptions: {
         headers: {
-          "User-Agent": "aistudio-build",
+          "User-Agent": "aistudio-build-vercel",
         },
       },
     });
   }
   return aiClient;
 }
-
-// Health check
-app.get("/api/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    timestamp: Date.now(),
-    hasApiKey: !!process.env.GEMINI_API_KEY,
-  });
-});
 
 function formatGeminiError(error: any): string {
   if (!error) return "An unexpected error occurred.";
@@ -73,15 +59,25 @@ function formatGeminiError(error: any): string {
       return "Rate limit exceeded. Please pause for a moment and try again.";
     }
     if (msg.includes("API key not valid") || msg.includes("API_KEY_INVALID")) {
-      return "Gemini API key is invalid or missing.";
+      return "Gemini API key is invalid or missing in server environment variables.";
     }
   }
 
   return typeof msg === "string" ? msg : "An error occurred during response generation.";
 }
 
+// Health check
+app.get("/api/health", (_req: Request, res: Response) => {
+  res.json({
+    status: "ok",
+    timestamp: Date.now(),
+    hasApiKey: !!process.env.GEMINI_API_KEY,
+    environment: "vercel-serverless",
+  });
+});
+
 // Stream Chat Completion Endpoint using Server-Sent Events (SSE)
-app.post("/api/chat/stream", async (req, res) => {
+app.post("/api/chat/stream", async (req: Request, res: Response) => {
   const {
     messages,
     model = "gemini-3.7-flash",
@@ -96,17 +92,14 @@ app.post("/api/chat/stream", async (req, res) => {
     return;
   }
 
-  // Set SSE Headers
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders?.();
 
-  // Map conversation history into Gemini format
   const contents = messages.map((m: any) => {
     const parts: any[] = [];
 
-    // Add attached images/files if present
     if (m.attachments && Array.isArray(m.attachments)) {
       for (const att of m.attachments) {
         if (att.data && att.mimeType) {
@@ -120,7 +113,6 @@ app.post("/api/chat/stream", async (req, res) => {
       }
     }
 
-    // Add text content
     if (m.content) {
       parts.push({
         text: m.content,
@@ -135,7 +127,6 @@ app.post("/api/chat/stream", async (req, res) => {
     };
   });
 
-  // Build model fallback chain for resilience against temporary 503 high demand
   const primaryModel = model || "gemini-3.7-flash";
   const fallbackModels = Array.from(
     new Set([
@@ -150,12 +141,10 @@ app.post("/api/chat/stream", async (req, res) => {
   let lastError: any = null;
 
   for (const currentModel of fallbackModels) {
-    // Up to 2 attempts per model for transient 503 spikes
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const ai = getAIClient();
 
-        // Build configuration object
         const config: any = {
           temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)),
         };
@@ -168,7 +157,6 @@ app.post("/api/chat/stream", async (req, res) => {
           config.tools = [{ googleSearch: {} }];
         }
 
-        // Thinking config for Gemini 3 series if requested and supported
         if (
           thinkingLevel &&
           thinkingLevel !== "default" &&
@@ -193,10 +181,9 @@ app.post("/api/chat/stream", async (req, res) => {
           }
         }
 
-        // Done event
         res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
         res.end();
-        return; // Successfully finished stream
+        return;
       } catch (error: any) {
         lastError = error;
         const errString = error?.message || String(error);
@@ -205,9 +192,8 @@ app.post("/api/chat/stream", async (req, res) => {
           errString.includes("high demand") ||
           errString.includes("UNAVAILABLE");
 
-        // If we already started streaming text to client, do not restart stream
         if (streamedAny) {
-          console.warn(`Stream interrupted mid-generation on ${currentModel}:`, errString);
+          console.warn(`Vercel Stream interrupted mid-generation on ${currentModel}:`, errString);
           const formattedErr = formatGeminiError(error);
           res.write(
             `data: ${JSON.stringify({
@@ -220,24 +206,21 @@ app.post("/api/chat/stream", async (req, res) => {
         }
 
         console.warn(
-          `Model ${currentModel} attempt ${attempt + 1} failed (${is503 ? "503 High Demand" : "Error"}):`,
+          `Vercel model ${currentModel} attempt ${attempt + 1} failed (${is503 ? "503 High Demand" : "Error"}):`,
           errString.slice(0, 150)
         );
 
         if (is503 && attempt === 0) {
-          // Quick backoff before retry on same model
           await new Promise((resolve) => setTimeout(resolve, 400));
           continue;
         }
 
-        // Move to next model
         break;
       }
     }
   }
 
-  // If all fallback models failed
-  console.error("All fallback models failed for chat stream:", lastError);
+  console.error("All fallback models failed on Vercel stream:", lastError);
   const formattedErr = formatGeminiError(lastError);
   res.write(
     `data: ${JSON.stringify({
@@ -248,15 +231,14 @@ app.post("/api/chat/stream", async (req, res) => {
   res.end();
 });
 
-// Auto Title Generation Endpoint
-app.post("/api/title", async (req, res) => {
+// Title generation endpoint
+app.post("/api/title", async (req: Request, res: Response) => {
   const { prompt } = req.body;
   if (!prompt || typeof prompt !== "string") {
     res.status(400).json({ error: "Prompt is required" });
     return;
   }
 
-  // Algorithmic clean fallback title
   const cleanFallbackTitle = () => {
     const words = prompt
       .trim()
@@ -289,16 +271,15 @@ app.post("/api/title", async (req, res) => {
         return;
       }
     } catch (err: any) {
-      console.warn(`Title generation warning on ${modelId}:`, err?.message || err);
+      console.warn(`Vercel title generation warning on ${modelId}:`, err?.message || err);
     }
   }
 
-  // Graceful fallback to algorithmic title
   res.json({ title: cleanFallbackTitle() });
 });
 
-// Audio Transcription Endpoint using gemini-3.5-transcribe
-app.post("/api/transcribe", async (req, res) => {
+// Audio transcription endpoint
+app.post("/api/transcribe", async (req: Request, res: Response) => {
   const { audioData, mimeType = "audio/webm" } = req.body;
 
   if (!audioData) {
@@ -330,32 +311,11 @@ app.post("/api/transcribe", async (req, res) => {
     const transcript = (response.text || "").trim();
     res.json({ text: transcript });
   } catch (error: any) {
-    console.error("Audio Transcription Error:", error);
+    console.error("Vercel Audio Transcription Error:", error);
     res.status(500).json({
       error: error?.message || "Failed to transcribe audio",
     });
   }
 });
 
-// Vite middleware & static serving
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Nexus Gemini Server running on http://0.0.0.0:${PORT}`);
-  });
-}
-
-startServer();
+export default app;

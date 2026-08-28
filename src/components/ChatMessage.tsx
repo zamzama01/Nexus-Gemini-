@@ -15,6 +15,7 @@ import {
   FileText,
   ExternalLink,
   Bot,
+  Sliders,
 } from "lucide-react";
 
 interface ChatMessageProps {
@@ -24,6 +25,7 @@ interface ChatMessageProps {
   onEditMessage?: (id: string, newContent: string) => void;
   onPreviewAttachment: (att: Attachment) => void;
   isSpeaking: boolean;
+  onOpenSettings?: () => void;
 }
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
@@ -33,6 +35,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   onEditMessage,
   onPreviewAttachment,
   isSpeaking,
+  onOpenSettings,
 }) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -251,16 +254,27 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                   <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-red-400" />
                   <div className="flex-1">
                     <p className="font-semibold text-red-200">Processing Error</p>
-                    <p className="mt-0.5 text-red-300/90">{message.error}</p>
-                    {onRegenerate && isLast && (
-                      <button
-                        type="button"
-                        onClick={onRegenerate}
-                        className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-900/60 hover:bg-red-800/80 text-red-100 text-xs font-medium border border-red-700/50 cursor-pointer"
-                      >
-                        <RotateCw className="w-3 h-3" /> Retry Generation
-                      </button>
-                    )}
+                    <p className="mt-0.5 text-red-300/90 leading-relaxed">{message.error}</p>
+                    <div className="mt-2.5 flex items-center flex-wrap gap-2">
+                      {onRegenerate && isLast && (
+                        <button
+                          type="button"
+                          onClick={onRegenerate}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-900/60 hover:bg-red-800/80 text-red-100 text-xs font-medium border border-red-700/50 cursor-pointer"
+                        >
+                          <RotateCw className="w-3 h-3" /> Retry Generation
+                        </button>
+                      )}
+                      {onOpenSettings && (
+                        <button
+                          type="button"
+                          onClick={onOpenSettings}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-900/60 hover:bg-blue-800/80 text-blue-100 text-xs font-medium border border-blue-700/50 cursor-pointer"
+                        >
+                          <Sliders className="w-3 h-3 text-blue-300" /> Open Settings
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (

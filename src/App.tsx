@@ -16,6 +16,7 @@ import {
 } from "./utils/storage.ts";
 import { SYSTEM_PERSONAS, DEFAULT_SETTINGS } from "./utils/constants.ts";
 import { tts } from "./utils/audio.ts";
+import { streamGeminiDirect, generateTitleDirect } from "./utils/geminiClient.ts";
 import { Header } from "./components/Header.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { ChatMessage } from "./components/ChatMessage.tsx";
@@ -102,8 +103,9 @@ export default function App() {
     setShowScrollBottom(!isNearBottom);
   };
 
-  // Generate Smart Title via server endpoint
+  // Generate Smart Title via server endpoint or direct client fallback
   const generateTitleForConversation = async (convId: string, promptText: string) => {
+    const clientApiKey = settings.customApiKey || (import.meta.env.VITE_GEMINI_API_KEY as string) || "";
     try {
       const res = await fetch("/api/title", {
         method: "POST",
@@ -116,11 +118,34 @@ export default function App() {
           setConversations((prev) =>
             prev.map((c) => (c.id === convId ? { ...c, title: data.title } : c))
           );
+          return;
         }
       }
     } catch (e) {
-      console.error("Auto title generation failed:", e);
+      console.warn("Server title endpoint unavailable, falling back to direct title generation.");
     }
+
+    // Direct client-side title generation fallback
+    if (clientApiKey) {
+      try {
+        const directTitle = await generateTitleDirect(promptText, clientApiKey);
+        if (directTitle) {
+          setConversations((prev) =>
+            prev.map((c) => (c.id === convId ? { ...c, title: directTitle } : c))
+          );
+          return;
+        }
+      } catch {
+        // Ignore fallback errors
+      }
+    }
+
+    // Fallback algorithmic title
+    const fallbackWords = promptText.trim().replace(/[^\w\s]/g, "").split(/\s+/).slice(0, 5).join(" ");
+    const fallbackTitle = fallbackWords ? fallbackWords.charAt(0).toUpperCase() + fallbackWords.slice(1) : "New Conversation";
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convId ? { ...c, title: fallbackTitle } : c))
+    );
   };
 
   // Main Send Message Handler
@@ -212,21 +237,110 @@ export default function App() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
-    try {
-      const response = await fetch("/api/chat/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+    const clientApiKey = settings.customApiKey || (import.meta.env.VITE_GEMINI_API_KEY as string) || "";
+
+    const runDirectStreamingFallback = async () => {
+      let accumulatedText = "";
+      await streamGeminiDirect({
+        messages: historyMessages,
+        model: selectedModel,
+        systemPrompt: settings.customSystemPrompt || activePersona.systemPrompt,
+        temperature: settings.temperature,
+        enableSearchGrounding: settings.enableSearchGrounding,
+        thinkingLevel: settings.thinkingLevel,
+        apiKey: clientApiKey,
         signal: abortController.signal,
-        body: JSON.stringify({
-          messages: historyMessages,
-          model: selectedModel,
-          systemPrompt:
-            settings.customSystemPrompt || activePersona.systemPrompt,
-          temperature: settings.temperature,
-          enableSearchGrounding: settings.enableSearchGrounding,
-          thinkingLevel: settings.thinkingLevel,
-        }),
+        onChunk: (chunk) => {
+          accumulatedText += chunk;
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === convId
+                ? {
+                    ...c,
+                    messages: c.messages.map((m) =>
+                      m.id === assistantMessageId
+                        ? { ...m, content: accumulatedText }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          );
+        },
+        onError: (err) => {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === convId
+                ? {
+                    ...c,
+                    messages: c.messages.map((m) =>
+                      m.id === assistantMessageId
+                        ? { ...m, isStreaming: false, error: err }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          );
+        },
+        onDone: () => {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === convId
+                ? {
+                    ...c,
+                    messages: c.messages.map((m) =>
+                      m.id === assistantMessageId
+                        ? { ...m, isStreaming: false }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          );
+        },
       });
+    };
+
+    try {
+      let response: Response;
+      try {
+        response = await fetch("/api/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
+          body: JSON.stringify({
+            messages: historyMessages,
+            model: selectedModel,
+            systemPrompt:
+              settings.customSystemPrompt || activePersona.systemPrompt,
+            temperature: settings.temperature,
+            enableSearchGrounding: settings.enableSearchGrounding,
+            thinkingLevel: settings.thinkingLevel,
+          }),
+        });
+      } catch (fetchErr: any) {
+        if (fetchErr.name === "AbortError") throw fetchErr;
+
+        // If backend fetch fails (e.g. static host or network error)
+        if (clientApiKey) {
+          await runDirectStreamingFallback();
+          return;
+        }
+        throw new Error(
+          "Static Deployment Detected (Network/404): Could not reach the /api backend server. If you are hosting on GitHub Pages, enter your Gemini API key in Settings to connect directly. (If hosting on Vercel, ensure GEMINI_API_KEY is configured in your Vercel Project Environment Variables)."
+        );
+      }
+
+      if (response.status === 404) {
+        if (clientApiKey) {
+          await runDirectStreamingFallback();
+          return;
+        }
+        throw new Error(
+          "Static Hosting Detected (HTTP 404): No backend server was found at /api. If you deployed to GitHub Pages or a static host, enter your Gemini API Key in Settings to run AI directly in your browser. (If using Vercel, ensure GEMINI_API_KEY is configured in your project's Environment Variables)."
+        );
+      }
 
       if (!response.ok) {
         throw new Error(`Server returned HTTP ${response.status}`);
@@ -534,6 +648,7 @@ export default function App() {
                   onEditMessage={handleEditMessage}
                   onPreviewAttachment={(att) => setLightboxAttachment(att)}
                   isSpeaking={speakingMessageId === msg.id}
+                  onOpenSettings={() => setIsSettingsOpen(true)}
                 />
               ))}
               <div ref={messagesEndRef} />

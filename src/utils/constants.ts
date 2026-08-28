@@ -107,6 +107,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoTitle: true,
   speechVoice: "default",
   speechRate: 1.0,
+  customApiKey: "",
 };
 
 export const PROMPT_SUGGESTIONS = [
